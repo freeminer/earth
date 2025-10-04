@@ -43,3 +43,15 @@
 [submodule "mods/advtrains_moreslopes"]
 	path = mods/advtrains_moreslopes
 	url = https://codeberg.org/Nazalassa/advtrains_moreslopes.git
+[submodule "mods/street_signs"]
+	path = mods/street_signs
+	url = https://github.com/mt-mods/street_signs.git
+[submodule "mods/morelights"]
+	path = mods/morelights
+	url = https://github.com/random-geek/morelights.git
+[submodule "mods/pipeworks"]
+	path = mods/pipeworks
+	url = https://github.com/mt-mods/pipeworks.git
+[submodule "mods/unified_inventory"]
+	path = mods/unified_inventory
+	url = https://github.com/minetest-mods/unified_inventory.git
