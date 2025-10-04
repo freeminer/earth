@@ -55,3 +55,24 @@
 [submodule "mods/unified_inventory"]
 	path = mods/unified_inventory
 	url = https://github.com/minetest-mods/unified_inventory.git
+[submodule "mods/signs_lib"]
+	path = mods/signs_lib
+	url = https://github.com/mt-mods/signs_lib.git
+[submodule "mods/unicode_text"]
+	path = mods/unicode_text
+	url = https://git.minetest.land/erle/unicode_text.git
+[submodule "mods/unifieddyes"]
+	path = mods/unifieddyes
+	url = https://github.com/mt-mods/unifieddyes.git
+[submodule "mods/basic_materials"]
+	path = mods/basic_materials
+	url = https://github.com/mt-mods/basic_materials.git
+[submodule "mods/xcompat"]
+	path = mods/xcompat
+	url = https://github.com/mt-mods/xcompat.git
+[submodule "mods/tga_encoder"]
+	path = mods/tga_encoder
+	url = https://git.minetest.land/erle/tga_encoder.git
+[submodule "mods/fakelib"]
+	path = mods/fakelib
+	url = https://github.com/OgelGames/fakelib.git
