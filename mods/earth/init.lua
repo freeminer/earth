@@ -137,7 +137,7 @@ local function do_geo_lookup_for_player(player)
     -- Check cache
     local cached = cache_get(ip)
     if cached then
-        return move_player_to_geo(player, data)
+        return move_player_to_geo(player, cached)
     end
 
     local url = get_api_url_for_ip(ip)
