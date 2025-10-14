@@ -76,3 +76,6 @@
 [submodule "mods/fakelib"]
 	path = mods/fakelib
 	url = https://github.com/OgelGames/fakelib.git
+[submodule "mods/mesecons"]
+	path = mods/mesecons
+	url = https://github.com/minetest-mods/mesecons.git
