@@ -68,8 +68,8 @@ end
 
 function ll_to_pos(l)
   local deg2m = EQUATOR_LEN / 360
-  local x = (l.lon / scale.X - center.X) * deg2m
-  local z = (l.lat / scale.Z - center.Z) * deg2m
+  local x = math.floor((l.lon / scale.X - center.X) * deg2m)
+  local z = math.floor((l.lat / scale.Z - center.Z) * deg2m)
   return  {x = x, z = z}
 end
 
@@ -110,6 +110,13 @@ local function move_player_to_geo(player, data)
         local message = "Earth: Moving to " .. (data.country or "").. " " .. (data.city or "") .. " : "..pos.x..",".. pos.y .. "," ..pos.z
         print(message)
         core.chat_send_player(player:get_player_name(), message)
+
+		local proto_ver = core.get_player_information(player:get_player_name()).protocol_version
+        if proto_ver < 140 then
+            core.chat_send_player(player:get_player_name(), "Your client does not support 32bit worlds, Use freeminer.org")
+		    return false
+        end
+
         player:set_pos(pos)
 		return true
     end
@@ -403,7 +410,7 @@ core.register_chatcommand("geo", {
         local lon = tonumber(params[2])
 
         if not lat or not lon then return false, "Invalid lat/lon or unknown city" end
-        data = {lat = lat, lon = lon}
+        local data = {lat = lat, lon = lon}
 
         move_player_to_geo(player, data)
         return true, ""
