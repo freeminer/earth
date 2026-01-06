@@ -120,16 +120,16 @@ local function move_player_to_geo(player, data)
         print(message)
         core.chat_send_player(player:get_player_name(), message)
 
-		local proto_ver = core.get_player_information(player:get_player_name()).protocol_version
+        local proto_ver = core.get_player_information(player:get_player_name()).protocol_version
         if proto_ver < 140 then
             core.chat_send_player(player:get_player_name(), "Your client does not support 32bit worlds, Use freeminer.org")
-		    return false
+            return false
         end
 
         player:set_pos(pos)
-		return true
+        return true
     end
-	return false
+    return false
 end
 
 
@@ -369,6 +369,9 @@ local cities = {
     palma_de_mallorca = { lat = 39.5696, lon = 2.6502 },
 
     -- add more if desired...
+
+    mariana = { lat = 11.35, lon = 142.2 },
+    everest = { lat = 7.988333, lon = 86.925278 },
 }
 
 local function get_api_url_for_name(name)
@@ -414,7 +417,7 @@ local function move_to_city(player, name)
         -- Store in cache (even errors are stored to avoid hammering API; store raw response table)
         cache_set(name, data)
 
-        return move_player_to_geo(player, data[0])
+        return move_player_to_geo(player, data[1])
     end)
     return nil
 end
