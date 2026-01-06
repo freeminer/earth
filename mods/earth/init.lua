@@ -35,7 +35,7 @@ local function is_private_ip(ip)
 end
 
 local function get_api_url_for_ip(ip)
-    local base = core.settings:get("geoip_on_join.api_url") or
+    local base = core.settings:get("geoip.api_ip_url") or
         "http://ip-api.com/json/%s?fields=status,message,country,regionName,city,lat,lon,timezone,isp,query"
     local key = core.settings:get("geoip.api_key") or ""
     if key ~= "" then
@@ -50,6 +50,14 @@ local function get_api_url_for_ip(ip)
         end
     end
     return base:format(ip)
+end
+
+local function urlencode(str)
+    if str then
+        str = string.gsub(str, "\n", "\r\n")
+        str = string.gsub(str, "([^%w%-_%.~])", function(c) return string.format("%%%02X", string.byte(c)) end)
+    end
+    return str
 end
 
 
@@ -75,7 +83,7 @@ end
 
 -- simple cache: ip -> { data = table or nil, fetched = time() }
 local cache = {}
-local cache_ttl = tonumber(core.settings:get("geoip.ache_ttl")) or 365*24*3600
+local cache_ttl = tonumber(core.settings:get("geoip.cache_ttl")) or 365*24*3600
 
 local function cache_get(ip)
     local e = cache[ip]
@@ -96,7 +104,6 @@ local mg_earth_ok, mg_earth_data = pcall(core.parse_json, mg_earth)
 
 local function move_player_to_geo(player, data)
     if data.lat and data.lon then
-
         local center_y = 0
         if mg_earth_ok and mg_earth_data and mg_earth_data.center then
             data.lon = data.lon - mg_earth_data.center.x
@@ -107,7 +114,9 @@ local function move_player_to_geo(player, data)
         local pos = ll_to_pos(data)
 
         pos.y = core.get_spawn_level(pos.x, pos.z) - center_y
-        local message = "Earth: Moving to " .. (data.country or "").. " " .. (data.city or "") .. " : "..pos.x..",".. pos.y .. "," ..pos.z
+        local message = "Earth: Moving to " .. 
+        (data.display_name or "") ..
+        (data.country or "") .. " " .. (data.city or "") .. " : "..pos.x..",".. pos.y .. "," ..pos.z
         print(message)
         core.chat_send_player(player:get_player_name(), message)
 
@@ -362,11 +371,52 @@ local cities = {
     -- add more if desired...
 }
 
+local function get_api_url_for_name(name)
+    local base = core.settings:get("geoip.api_geocode_url") or
+        "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=%s"
+    return base:format(urlencode(name))
+end
 
-local function lookup_city(name)
+
+local function move_to_city(player, name)
     if not name then return nil end
-    local key = string.lower(name:gsub("[^%w]+", "_"))
-    return cities[key]
+
+    -- Check cache
+    local cached = cache_get(name)
+    if cached then
+        move_player_to_geo(player, cached)
+        return nil
+    end
+
+    local url = get_api_url_for_name(name)
+
+    if not http then
+        print("[geoip] HTTP API not available on server; cannot perform GeoIP lookup.")
+        local key = string.lower(name:gsub("[^%w]+", "_"))
+        return cities[key]
+    end
+
+    http.fetch({ url = url, timeout = 8 }, function(result)
+        if not result or not result.succeeded then
+            local err = (result and result.error) and result.error or "unknown error"
+            core.chat_send_player(pname, "[geoip] nominatim request failed: " .. tostring(err))
+            print("nominatim fail", tostring(err))
+            return
+        end
+        print("Player geo: ", name, result.data)
+        local ok, data = pcall(core.parse_json, result.data)
+        if not ok or not data then
+            --core.chat_send_player(pname, "[geoip] Failed to parse GeoIP response.")
+            print("nominatim fail", data)
+            return
+        end
+
+        -- Store in cache (even errors are stored to avoid hammering API; store raw response table)
+        cache_set(name, data)
+
+        return move_player_to_geo(player, data[0])
+    end)
+    return nil
 end
 
 local function split_args(s)
@@ -399,24 +449,33 @@ core.register_chatcommand("geo", {
             end
         end
 
-        if #params ~= 2 then
-                local cityref = lookup_city(params[1])
-                if cityref then
-                    params = {cityref.lat, cityref.lon}
-                end
+        local data
+        if #params == 2 then
+            local lat = tonumber(params[1])
+            local lon = tonumber(params[2])
+            if lat and lon then
+                data = {lat = lat, lon = lon}
+            end
         end
 
-        local lat = tonumber(params[1])
-        local lon = tonumber(params[2])
+        if not data then
+            local cityref = move_to_city(player, table.concat(params," ", 1))
+            if cityref then
+                data = {lat = cityref.lat, lon = cityref.lon}
+            else
+                -- maybe moved async
+                return true, ""
+            end
+        end
 
-        if not lat or not lon then return false, "Invalid lat/lon or unknown city" end
-        local data = {lat = lat, lon = lon}
+        if not data then
+            return false, "Invalid lat/lon or unknown city"
+        end
 
         move_player_to_geo(player, data)
         return true, ""
     end,
 })
-
 
 
 if mg_earth_ok and mg_earth_data and mg_earth_data.center and mg_earth_data.center.x and mg_earth_data.center.z then
