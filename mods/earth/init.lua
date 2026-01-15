@@ -408,7 +408,7 @@ local function move_to_city(player, name)
         end
         print("Player geo: ", name, result.data)
         local ok, data = pcall(core.parse_json, result.data)
-        if not ok or not data then
+        if not ok or not data or not data[1] then
             --core.chat_send_player(pname, "[geoip] Failed to parse GeoIP response.")
             print("nominatim fail", data)
             return
