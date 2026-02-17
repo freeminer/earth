@@ -184,11 +184,13 @@ local function smooth_move_player(player, target, max_h, duration)
     local function move_step(i)
         if i > steps then
             player:set_pos(target) -- Ensure final position is exact.
-            player:set_velocity({
-                x = 0,
-                y = 0,
-                z = 0,
-            }) -- Stop velocity at end
+            -- Stop velocity at end by adding the difference between zero and current velocity
+            local current_velocity = player:get_velocity() or {x = 0, y = 0, z = 0}
+            player:add_velocity({
+                x = -current_velocity.x,
+                y = -current_velocity.y,
+                z = -current_velocity.z,
+            })
             return
         end
         local t = i / steps -- Normalized time [0,1]
@@ -219,13 +221,21 @@ local function smooth_move_player(player, target, max_h, duration)
             vertical_velocity_scale = velocity_scale * (horizontal_distance / limited_max_h)
         end
 
-        local velocity = {
+        local wanted_velocity = {
             x = (target.x - start.x) * velocity_eased_t * velocity_scale,
             y = (target.y - start.y) * velocity_eased_t * velocity_scale + -- Add vertical velocity component for parabolic path
             (limited_max_h * 4 * (0.5 - t)) * vertical_velocity_scale,
             z = (target.z - start.z) * velocity_eased_t * velocity_scale,
         }
-        player:set_velocity(velocity)
+        
+        -- Get current velocity and calculate difference
+        local current_velocity = player:get_velocity() or {x = 0, y = 0, z = 0}
+        local velocity_diff = {
+            x = wanted_velocity.x - current_velocity.x,
+            y = wanted_velocity.y - current_velocity.y,
+            z = wanted_velocity.z - current_velocity.z,
+        }
+        player:add_velocity(velocity_diff)
 
         minetest.after(step_interval, move_step, i + 1)
     end
