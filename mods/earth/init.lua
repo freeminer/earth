@@ -150,10 +150,20 @@ local function smooth_move_player(player, target, max_h, duration)
     local step_interval = 0.05 -- seconds per step
     local steps = math.max(1, math.floor(duration / step_interval))
 
+    -- Calculate horizontal distance
+    local horizontal_distance = math.sqrt((target.x - start.x) ^ 2 + (target.z - start.z) ^ 2)
+
+    -- Limit max_h to 0.2 of horizontal distance
+    local limited_max_h = max_h
+    if horizontal_distance > 0 then
+        local max_allowed_height = horizontal_distance * 0.2
+        limited_max_h = math.min(max_h, max_allowed_height)
+    end
+
     -- Compute apex position (not directly used but kept for reference).
     local apex = {
         x = (start.x + target.x) / 2,
-        y = math.max(start.y, target.y) + max_h,
+        y = math.max(start.y, target.y) + limited_max_h,
         z = (start.z + target.z) / 2,
     }
 
@@ -187,7 +197,7 @@ local function smooth_move_player(player, target, max_h, duration)
         -- Parabolic interpolation for height.
         -- The parabola (2t-1)^2 goes from 1 → 0 → 1; we invert it to get a hill.
         local height_factor = 1 - (2 * t - 1) ^ 2
-        local y = lerp(start.y, target.y, t) + height_factor * max_h
+        local y = lerp(start.y, target.y, t) + height_factor * limited_max_h
 
         local pos = {
             x = lerp(start.x, target.x, eased_t),
@@ -202,20 +212,17 @@ local function smooth_move_player(player, target, max_h, duration)
         local velocity_eased_t = ease_in_out_sine_derivative(t) -- Derivative for velocity
         local velocity_scale = 1 / duration -- Scale to match duration
 
-        -- Calculate horizontal distance
-        local horizontal_distance = math.sqrt((target.x - start.x) ^ 2 + (target.z - start.z) ^ 2)
-
         -- Scale vertical velocity to match horizontal velocity
         -- This prevents extreme vertical movement from dominating
         local vertical_velocity_scale = velocity_scale
-        if horizontal_distance > 0 and max_h > horizontal_distance then
-            vertical_velocity_scale = velocity_scale * (horizontal_distance / max_h)
+        if horizontal_distance > 0 and limited_max_h > horizontal_distance then
+            vertical_velocity_scale = velocity_scale * (horizontal_distance / limited_max_h)
         end
 
         local velocity = {
             x = (target.x - start.x) * velocity_eased_t * velocity_scale,
             y = (target.y - start.y) * velocity_eased_t * velocity_scale + -- Add vertical velocity component for parabolic path
-            (max_h * 4 * (0.5 - t)) * vertical_velocity_scale,
+            (limited_max_h * 4 * (0.5 - t)) * vertical_velocity_scale,
             z = (target.z - start.z) * velocity_eased_t * velocity_scale,
         }
         player:set_velocity(velocity)
@@ -985,8 +992,8 @@ local function move_to_city(player, name)
 
     -- Check cache
     local cached = cache_get(name)
-    if cached then
-        move_player_to_geo(player, cached)
+    if cached and cached[1] then
+        move_player_to_geo(player, cached[1])
         return nil
     end
 
