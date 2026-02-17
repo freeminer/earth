@@ -102,6 +102,91 @@ end
 local mg_earth = core.settings:get("mg_earth")
 local mg_earth_ok, mg_earth_data = pcall(core.parse_json, mg_earth)
 
+
+-- Smoothly move a player to a target position using a parabolic trajectory.
+-- @param player   Player object to move.
+-- @param target   Table with x, y, z fields indicating the destination position.
+-- @param max_h    Maximum height (in nodes) above the higher of start/end y to reach at the apex.
+-- @param duration Total time (in seconds) for the movement.
+local function smooth_move_player(player, target, max_h, duration)
+    if not player or not target then return end
+    local start = player:get_pos()
+    if not start then return end
+
+    -- Ensure duration is positive and set a reasonable step interval.
+    local step_interval = 0.05  -- seconds per step
+    local steps = math.max(1, math.floor(duration / step_interval))
+
+    -- Compute apex position (not directly used but kept for reference).
+    local apex = {
+        x = (start.x + target.x) / 2,
+        y = math.max(start.y, target.y) + max_h,
+        z = (start.z + target.z) / 2,
+    }
+
+    local function lerp(a, b, t) return a + (b - a) * t end
+    
+    -- Sine-based easing function for smooth acceleration/deceleration
+    local function ease_in_out_sine(t) return (1 - math.cos(t * math.pi)) / 2 end
+    
+    -- Derivative of ease_in_out_sine for velocity calculation
+    local function ease_in_out_sine_derivative(t) return (math.pi / 2) * math.sin(t * math.pi) end
+
+    local function move_step(i)
+        if i > steps then
+            player:set_pos(target)  -- Ensure final position is exact.
+            player:set_velocity({x=0, y=0, z=0})  -- Stop velocity at end
+            return
+        end
+        local t = i / steps  -- Normalized time [0,1]
+        local eased_t = ease_in_out_sine(t)  -- Apply easing to time
+
+        -- Parabolic interpolation for height.
+        -- The parabola (2t-1)^2 goes from 1 → 0 → 1; we invert it to get a hill.
+        local height_factor = 1 - (2 * t - 1) ^ 2
+        local y = lerp(start.y, target.y, t) + height_factor * max_h
+
+        local pos = {
+            x = lerp(start.x, target.x, eased_t),
+            y = y,
+            z = lerp(start.z, target.z, eased_t),
+        }
+        
+        -- Set position
+        player:set_pos(pos)
+        
+        -- Set velocity based on derivative of easing function
+        local velocity_eased_t = ease_in_out_sine_derivative(t)  -- Derivative for velocity
+        local velocity_scale = 1 / duration  -- Scale to match duration
+        
+        -- Calculate horizontal distance
+        local horizontal_distance = math.sqrt(
+            (target.x - start.x)^2 + 
+            (target.z - start.z)^2
+        )
+        
+        -- Scale vertical velocity to match horizontal velocity
+        -- This prevents extreme vertical movement from dominating
+        local vertical_velocity_scale = velocity_scale
+        if horizontal_distance > 0 and max_h > horizontal_distance then
+            vertical_velocity_scale = velocity_scale * (horizontal_distance / max_h)
+        end
+        
+        local velocity = {
+            x = (target.x - start.x) * velocity_eased_t * velocity_scale,
+            y = (target.y - start.y) * velocity_eased_t * velocity_scale + 
+                -- Add vertical velocity component for parabolic path
+                (max_h * 4 * (0.5 - t)) * vertical_velocity_scale,
+            z = (target.z - start.z) * velocity_eased_t * velocity_scale
+        }
+        player:set_velocity(velocity)
+        
+        minetest.after(step_interval, move_step, i + 1)
+    end
+
+    move_step(0)
+end
+
 local function move_player_to_geo(player, data)
     if data.lat and data.lon then
         local center_y = 0
@@ -126,7 +211,8 @@ local function move_player_to_geo(player, data)
             return false
         end
 
-        player:set_pos(pos)
+        --player:set_pos(pos)
+        smooth_move_player(player, pos, 100000, 5)
         return true
     end
     return false
