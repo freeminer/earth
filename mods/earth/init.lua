@@ -185,7 +185,11 @@ local function smooth_move_player(player, target, max_h, duration)
         if i > steps then
             player:set_pos(target) -- Ensure final position is exact.
             -- Stop velocity at end by adding the difference between zero and current velocity
-            local current_velocity = player:get_velocity() or {x = 0, y = 0, z = 0}
+            local current_velocity = player:get_velocity() or {
+                x = 0,
+                y = 0,
+                z = 0,
+            }
             player:add_velocity({
                 x = -current_velocity.x,
                 y = -current_velocity.y,
@@ -227,9 +231,13 @@ local function smooth_move_player(player, target, max_h, duration)
             (limited_max_h * 4 * (0.5 - t)) * vertical_velocity_scale,
             z = (target.z - start.z) * velocity_eased_t * velocity_scale,
         }
-        
+
         -- Get current velocity and calculate difference
-        local current_velocity = player:get_velocity() or {x = 0, y = 0, z = 0}
+        local current_velocity = player:get_velocity() or {
+            x = 0,
+            y = 0,
+            z = 0,
+        }
         local velocity_diff = {
             x = wanted_velocity.x - current_velocity.x,
             y = wanted_velocity.y - current_velocity.y,
@@ -243,7 +251,7 @@ local function smooth_move_player(player, target, max_h, duration)
     move_step(0)
 end
 
-local function move_player_to_geo(player, data)
+local function move_player_to_geo(player, data, smooth)
     if data.lat and data.lon then
         local center_y = 0
         if mg_earth_ok and mg_earth_data and mg_earth_data.center then
@@ -267,14 +275,18 @@ local function move_player_to_geo(player, data)
             return false
         end
 
-        -- player:set_pos(pos)
-        smooth_move_player(player, pos, 100000, 5)
+        if smooth then
+            smooth_move_player(player, pos, 100000, 5)
+        else
+            player:set_pos(pos)
+        end
+
         return true
     end
     return false
 end
 
-local function do_geo_lookup_for_player(player)
+local function do_geo_lookup_for_player(player, instant)
     if not http then
         print("[geoip] HTTP API not available on server; cannot perform GeoIP lookup.")
         return
@@ -296,7 +308,7 @@ local function do_geo_lookup_for_player(player)
     -- Check cache
     local cached = cache_get(ip)
     if cached then
-        return move_player_to_geo(player, cached)
+        return move_player_to_geo(player, cached, not instant)
     end
 
     local url = get_api_url_for_ip(ip)
@@ -321,9 +333,13 @@ local function do_geo_lookup_for_player(player)
         -- Store in cache (even errors are stored to avoid hammering API; store raw response table)
         cache_set(ip, data)
 
-        return move_player_to_geo(player, data)
+        return move_player_to_geo(player, data, not instant)
     end)
     return true
+end
+
+local function do_geo_lookup_for_player_instant(player)
+    return do_geo_lookup_for_player(player, 1)
 end
 
 -- Predefined cities map (add or change as needed)
@@ -1003,7 +1019,7 @@ local function move_to_city(player, name)
     -- Check cache
     local cached = cache_get(name)
     if cached and cached[1] then
-        move_player_to_geo(player, cached[1])
+        move_player_to_geo(player, cached[1], 1)
         return nil
     end
 
@@ -1036,7 +1052,7 @@ local function move_to_city(player, name)
         -- Store in cache (even errors are stored to avoid hammering API; store raw response table)
         cache_set(name, data)
 
-        return move_player_to_geo(player, data[1])
+        return move_player_to_geo(player, data[1], 1)
     end)
     return nil
 end
@@ -1102,7 +1118,7 @@ core.register_chatcommand("geo", {
             return false, "Invalid lat/lon or unknown city"
         end
 
-        move_player_to_geo(player, data)
+        move_player_to_geo(player, data, 1)
         return true, ""
     end,
 })
@@ -1110,5 +1126,5 @@ core.register_chatcommand("geo", {
 if mg_earth_ok and mg_earth_data and mg_earth_data.center and mg_earth_data.center.x and mg_earth_data.center.z then
 elseif core.settings:get("earth_geo_spawn") then
     core.register_on_newplayer(do_geo_lookup_for_player)
-    core.register_on_respawnplayer(do_geo_lookup_for_player)
+    core.register_on_respawnplayer(do_geo_lookup_for_player_instant)
 end
