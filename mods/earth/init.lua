@@ -158,6 +158,8 @@ local function smooth_move_player(player, target, max_h, duration)
     if horizontal_distance > 0 then
         local max_allowed_height = horizontal_distance * 0.2
         limited_max_h = math.min(max_h, max_allowed_height)
+    else
+        limited_max_h = target.y + 100
     end
 
     -- Compute apex position (not directly used but kept for reference).
@@ -171,79 +173,137 @@ local function smooth_move_player(player, target, max_h, duration)
         return a + (b - a) * t
     end
 
-    -- Sine-based easing function for smooth acceleration/deceleration
-    local function ease_in_out_sine(t)
-        return (1 - math.cos(t * math.pi)) / 2
+    -- Even smoother easing function with gentler acceleration at start and deceleration at end
+    -- Using a 7th-order polynomial for ultra-smooth transitions
+    local function ease_in_out_smooth(t)
+        -- 7th-order easing: -20t^7 + 70t^6 - 84t^5 + 35t^4
+        -- This provides extremely gentle acceleration at start and gentle deceleration at end
+        local t2 = t * t
+        local t3 = t2 * t
+        local t4 = t3 * t
+        local t5 = t4 * t
+        local t6 = t5 * t
+        local t7 = t6 * t
+        return -20 * t7 + 70 * t6 - 84 * t5 + 35 * t4
     end
 
-    -- Derivative of ease_in_out_sine for velocity calculation
-    local function ease_in_out_sine_derivative(t)
-        return (math.pi / 2) * math.sin(t * math.pi)
+    -- Derivative of ease_in_out_smooth for velocity calculation
+    -- d/dt [-20t^7 + 70t^6 - 84t^5 + 35t^4] = -140t^6 + 420t^5 - 420t^4 + 140t^3
+    local function ease_in_out_smooth_derivative(t)
+        local t2 = t * t
+        local t3 = t2 * t
+        local t4 = t3 * t
+        local t5 = t4 * t
+        local t6 = t5 * t
+        return -140 * t6 + 420 * t5 - 420 * t4 + 140 * t3
     end
 
     local function move_step(i)
-        if i > steps then
+        -- Add a smooth ending phase for the last few steps
+        local end_phase_steps = 5 -- Number of steps for smooth ending
+        if i > steps + end_phase_steps then
             player:set_pos(target) -- Ensure final position is exact.
-            -- Stop velocity at end by adding the difference between zero and current velocity
-            local current_velocity = player:get_velocity() or {
+            -- Stop velocity at end by setting it to zero
+            player:set_velocity({
                 x = 0,
                 y = 0,
                 z = 0,
-            }
-            player:add_velocity({
-                x = -current_velocity.x,
-                y = -current_velocity.y,
-                z = -current_velocity.z,
             })
             return
         end
-        local t = i / steps -- Normalized time [0,1]
-        local eased_t = ease_in_out_sine(t) -- Apply easing to time
-
-        -- Parabolic interpolation for height.
-        -- The parabola (2t-1)^2 goes from 1 → 0 → 1; we invert it to get a hill.
-        local height_factor = 1 - (2 * t - 1) ^ 2
-        local y = lerp(start.y, target.y, t) + height_factor * limited_max_h
-
-        local pos = {
-            x = lerp(start.x, target.x, eased_t),
-            y = y,
-            z = lerp(start.z, target.z, eased_t),
-        }
-
-        -- Set position
-        player:set_pos(pos)
-
-        -- Set velocity based on derivative of easing function
-        local velocity_eased_t = ease_in_out_sine_derivative(t) -- Derivative for velocity
-        local velocity_scale = 1 / duration -- Scale to match duration
-
-        -- Scale vertical velocity to match horizontal velocity
-        -- This prevents extreme vertical movement from dominating
-        local vertical_velocity_scale = velocity_scale
-        if horizontal_distance > 0 and limited_max_h > horizontal_distance then
-            vertical_velocity_scale = velocity_scale * (horizontal_distance / limited_max_h)
+        
+        local t
+        if i > steps then
+            -- Smooth ending phase: gradually reduce velocity to zero
+            local end_phase_t = (i - steps) / end_phase_steps
+            -- Use exponential decay for smooth slowdown
+            t = 1 - (1 - end_phase_t) ^ 3 -- Cubic decay for gentle slowdown
+        else
+            t = i / steps -- Normalized time [0,1]
         end
+        
+        if i <= steps then
+            -- Normal movement phase
+            -- Use exponential smoothing for ultra-smooth starts and stops
+            -- This provides the gentlest possible acceleration and deceleration
+            local smooth_t = t * t * (3 - 2 * t) -- Smoothstep for basic smoothing
+            local ultra_smooth_t = smooth_t * smooth_t * (3 - 2 * smooth_t) -- Double smoothstep for extra smoothness
+            
+            -- Calculate velocity based on ultra-smooth easing with exponential decay at ends
+            local velocity_eased_t = ease_in_out_smooth_derivative(ultra_smooth_t)
+            
+            -- Apply additional smoothing factor for even gentler transitions
+            local smoothing_factor = math.sin(t * math.pi) -- Sine wave for natural smoothing
+            velocity_eased_t = velocity_eased_t * smoothing_factor
+            
+            local vel_scale = 1 / duration
+            
+            -- Calculate desired velocity components with additional smoothing
+            local desired_vel_x = (target.x - start.x) * velocity_eased_t * vel_scale
+            local desired_vel_z = (target.z - start.z) * velocity_eased_t * vel_scale
+            
+            -- Calculate vertical velocity with parabolic component
+            local height_factor_derivative = -4 * (2 * ultra_smooth_t - 1) -- Derivative of parabolic height
+            local desired_vel_y = (target.y - start.y) / duration + height_factor_derivative * limited_max_h / duration
 
-        local wanted_velocity = {
-            x = (target.x - start.x) * velocity_eased_t * velocity_scale,
-            y = (target.y - start.y) * velocity_eased_t * velocity_scale + -- Add vertical velocity component for parabolic path
-            (limited_max_h * 4 * (0.5 - t)) * vertical_velocity_scale,
-            z = (target.z - start.z) * velocity_eased_t * velocity_scale,
-        }
+            local desired_velocity = {
+                x = desired_vel_x,
+                y = desired_vel_y,
+                z = desired_vel_z,
+            }
 
-        -- Get current velocity and calculate difference
-        local current_velocity = player:get_velocity() or {
-            x = 0,
-            y = 0,
-            z = 0,
-        }
-        local velocity_diff = {
-            x = wanted_velocity.x - current_velocity.x,
-            y = wanted_velocity.y - current_velocity.y,
-            z = wanted_velocity.z - current_velocity.z,
-        }
-        player:add_velocity(velocity_diff)
+            -- Set the calculated velocity
+            player:set_velocity(desired_velocity)
+            
+            -- Integrate velocity to calculate new position
+            local current_pos = player:get_pos() or start
+            local new_pos = {
+                x = current_pos.x + desired_vel_x * step_interval,
+                y = current_pos.y + desired_vel_y * step_interval,
+                z = current_pos.z + desired_vel_z * step_interval,
+            }
+
+            -- Set the integrated position
+            player:set_pos(new_pos)
+        else
+            -- Ending phase: smoothly reduce velocity to zero while maintaining position
+            local current_pos = player:get_pos() or start
+            local current_vel = player:get_velocity() or {x = 0, y = 0, z = 0}
+            
+            -- Gradually reduce velocity to zero
+            local decay_factor = 1 - ((i - steps) / end_phase_steps)
+            local smoothed_decay = decay_factor ^ 2 -- Quadratic decay for smoother slowdown
+            
+            local final_velocity = {
+                x = current_vel.x * smoothed_decay,
+                y = current_vel.y * smoothed_decay,
+                z = current_vel.z * smoothed_decay,
+            }
+            
+            player:set_velocity(final_velocity)
+            
+            -- Continue integrating with reduced velocity
+            local final_pos = {
+                x = current_pos.x + final_velocity.x * step_interval,
+                y = current_pos.y + final_velocity.y * step_interval,
+                z = current_pos.z + final_velocity.z * step_interval,
+            }
+            
+            -- Ensure we don't overshoot the target
+            local dist_to_target = math.sqrt(
+                (final_pos.x - target.x)^2 +
+                (final_pos.y - target.y)^2 +
+                (final_pos.z - target.z)^2
+            )
+            
+            if dist_to_target < 0.1 then
+                -- Close enough to target, snap to exact position
+                player:set_pos(target)
+                player:set_velocity({x = 0, y = 0, z = 0})
+            else
+                player:set_pos(final_pos)
+            end
+        end
 
         minetest.after(step_interval, move_step, i + 1)
     end
