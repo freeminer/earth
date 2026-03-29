@@ -210,25 +210,25 @@ local function smooth_move_player(player, target, max_h, duration)
             return
         end
         local t = i / steps -- Normalized time [0,1]
-        
+
         -- Use exponential smoothing for ultra-smooth starts and stops
         -- This provides the gentlest possible acceleration and deceleration
         local smooth_t = t * t * (3 - 2 * t) -- Smoothstep for basic smoothing
         local ultra_smooth_t = smooth_t * smooth_t * (3 - 2 * smooth_t) -- Double smoothstep for extra smoothness
-        
+
         -- Calculate velocity based on ultra-smooth easing with exponential decay at ends
         local velocity_eased_t = ease_in_out_smooth_derivative(ultra_smooth_t)
-        
+
         -- Apply additional smoothing factor for even gentler transitions
         local smoothing_factor = math.sin(t * math.pi) -- Sine wave for natural smoothing
         velocity_eased_t = velocity_eased_t * smoothing_factor
-        
+
         local vel_scale = 1 / duration
-        
+
         -- Calculate desired velocity components with additional smoothing
         local desired_vel_x = (target.x - start.x) * velocity_eased_t * vel_scale
         local desired_vel_z = (target.z - start.z) * velocity_eased_t * vel_scale
-        
+
         -- Calculate vertical velocity with parabolic component
         local height_factor_derivative = -4 * (2 * ultra_smooth_t - 1) -- Derivative of parabolic height
         local desired_vel_y = (target.y - start.y) / duration + height_factor_derivative * limited_max_h / duration
@@ -241,7 +241,7 @@ local function smooth_move_player(player, target, max_h, duration)
 
         -- Set the calculated velocity
         player:set_velocity(desired_velocity)
-        
+
         -- Integrate velocity to calculate new position
         local current_pos = player:get_pos() or start
         local new_pos = {
@@ -259,16 +259,29 @@ local function smooth_move_player(player, target, max_h, duration)
     move_step(0)
 end
 
+local function simple_deepcopy(tbl)
+    if type(tbl) ~= 'table' then
+        return tbl
+    end
+    local res = {}
+    for k, v in pairs(tbl) do
+        res[simple_deepcopy(k)] = simple_deepcopy(v)
+    end
+    return res
+end
 local function move_player_to_geo(player, data, smooth)
     if data.lat and data.lon then
+        -- Make a copy of the data to avoid modifying cached data in-place
+        local geo_data = simple_deepcopy(data)
+
         local center_y = 0
         if mg_earth_ok and mg_earth_data and mg_earth_data.center then
-            data.lon = data.lon - mg_earth_data.center.x
-            data.lat = data.lat - mg_earth_data.center.z
+            geo_data.lon = geo_data.lon - mg_earth_data.center.x
+            geo_data.lat = geo_data.lat - mg_earth_data.center.z
             center_y = mg_earth_data.center.y
         end
 
-        local pos = ll_to_pos(data)
+        local pos = ll_to_pos(geo_data)
 
         pos.y = core.get_spawn_level(pos.x, pos.z) - center_y
         local message = "Earth: Moving to " .. (data.display_name or "") .. (data.country or "") .. " " ..
