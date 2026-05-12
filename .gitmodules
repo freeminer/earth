@@ -79,3 +79,6 @@
 [submodule "mods/mesecons"]
 	path = mods/mesecons
 	url = https://github.com/minetest-mods/mesecons.git
+[submodule "mods/luanti-earth"]
+	path = mods/luanti-earth
+	url = https://github.com/freeminer/luanti-earth.git
