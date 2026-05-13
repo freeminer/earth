@@ -132,10 +132,13 @@ end
 local mg_earth = core.settings:get("mg_earth")
 local mg_earth_ok, mg_earth_data = pcall(core.parse_json, mg_earth)
 
+local smooth_move_serial = 0
+local smooth_move_active = {}
+
 -- Smoothly move a player to a target position using a parabolic trajectory.
 -- @param player   Player object to move.
 -- @param target   Table with x, y, z fields indicating the destination position.
--- @param max_h    Maximum height (in nodes) above the higher of start/end y to reach at the apex.
+-- @param max_h    Maximum extra arc height (in nodes), also capped by horizontal distance.
 -- @param duration Total time (in seconds) for the movement.
 local function smooth_move_player(player, target, max_h, duration)
     if not player or not target then
@@ -146,114 +149,89 @@ local function smooth_move_player(player, target, max_h, duration)
         return
     end
 
-    -- Ensure duration is positive and set a reasonable step interval.
-    local step_interval = 0.05 -- seconds per step
-    local steps = math.max(1, math.floor(duration / step_interval))
-
-    -- Calculate horizontal distance
-    local horizontal_distance = math.sqrt((target.x - start.x) ^ 2 + (target.z - start.z) ^ 2)
-
-    -- Limit max_h to 0.2 of horizontal distance
-    local limited_max_h = max_h
-    if horizontal_distance > 0 then
-        local max_allowed_height = horizontal_distance * 0.2
-        limited_max_h = math.min(max_h, max_allowed_height)
-    else
-        limited_max_h = target.y + 100
-    end
-
-    -- Compute apex position (not directly used but kept for reference).
-    local apex = {
-        x = (start.x + target.x) / 2,
-        y = math.max(start.y, target.y) + limited_max_h,
-        z = (start.z + target.z) / 2,
+    target = {
+        x = target.x,
+        y = target.y,
+        z = target.z,
     }
+    duration = math.max(0.001, tonumber(duration) or 0.001)
+    max_h = math.max(0, tonumber(max_h) or 0)
+
+    local move_key = player:get_player_name()
+    smooth_move_serial = smooth_move_serial + 1
+    smooth_move_active[move_key] = smooth_move_serial
+    local move_id = smooth_move_serial
+
+    -- Keep the step interval short enough to look smooth, and divide the
+    -- requested duration evenly so the last step lands exactly on time.
+    local step_interval = 0.05
+    local steps = math.max(1, math.ceil(duration / step_interval))
+    local actual_interval = duration / steps
+
+    local dx = target.x - start.x
+    local dz = target.z - start.z
+    local horizontal_distance = math.sqrt(dx * dx + dz * dz)
+
+    -- Limit the arc height so long jumps rise visibly without becoming a
+    -- near-vertical launch. For straight vertical moves, do not add an arc.
+    local limited_max_h = 0
+    if horizontal_distance > 0 then
+        limited_max_h = math.min(max_h, horizontal_distance * 0.06)
+    end
 
     local function lerp(a, b, t)
         return a + (b - a) * t
     end
 
-    -- Even smoother easing function with gentler acceleration at start and deceleration at end
-    -- Using a 7th-order polynomial for ultra-smooth transitions
-    local function ease_in_out_smooth(t)
-        -- 7th-order easing: -20t^7 + 70t^6 - 84t^5 + 35t^4
-        -- This provides extremely gentle acceleration at start and gentle deceleration at end
-        local t2 = t * t
-        local t3 = t2 * t
-        local t4 = t3 * t
-        local t5 = t4 * t
-        local t6 = t5 * t
-        local t7 = t6 * t
-        return -20 * t7 + 70 * t6 - 84 * t5 + 35 * t4
+    local function smooth_progress(t)
+        return t * t * t * (10 + t * (-15 + 6 * t))
     end
 
-    -- Derivative of ease_in_out_smooth for velocity calculation
-    -- d/dt [-20t^7 + 70t^6 - 84t^5 + 35t^4] = -140t^6 + 420t^5 - 420t^4 + 140t^3
-    local function ease_in_out_smooth_derivative(t)
-        local t2 = t * t
-        local t3 = t2 * t
-        local t4 = t3 * t
-        local t5 = t4 * t
-        local t6 = t5 * t
-        return -140 * t6 + 420 * t5 - 420 * t4 + 140 * t3
+    local function arc_y(t)
+        return lerp(start.y, target.y, t) + 4 * limited_max_h * t * (1 - t)
+    end
+
+    local function path_pos(t)
+        return {
+            x = lerp(start.x, target.x, t),
+            y = arc_y(t),
+            z = lerp(start.z, target.z, t),
+        }
     end
 
     local function move_step(i)
-        if i > steps then
-            player:set_pos(target) -- Ensure final position is exact.
-            -- Stop velocity at end by setting it to zero
+        if smooth_move_active[move_key] ~= move_id then
+            return
+        end
+
+        if not player:get_pos() then
+            smooth_move_active[move_key] = nil
+            return
+        end
+
+        if i >= steps then
+            player:set_pos(target)
             player:set_velocity({
                 x = 0,
                 y = 0,
                 z = 0,
             })
+            smooth_move_active[move_key] = nil
             return
         end
-        local t = i / steps -- Normalized time [0,1]
 
-        -- Use exponential smoothing for ultra-smooth starts and stops
-        -- This provides the gentlest possible acceleration and deceleration
-        local smooth_t = t * t * (3 - 2 * t) -- Smoothstep for basic smoothing
-        local ultra_smooth_t = smooth_t * smooth_t * (3 - 2 * smooth_t) -- Double smoothstep for extra smoothness
-
-        -- Calculate velocity based on ultra-smooth easing with exponential decay at ends
-        local velocity_eased_t = ease_in_out_smooth_derivative(ultra_smooth_t)
-
-        -- Apply additional smoothing factor for even gentler transitions
-        local smoothing_factor = math.sin(t * math.pi) -- Sine wave for natural smoothing
-        velocity_eased_t = velocity_eased_t * smoothing_factor
-
-        local vel_scale = 1 / duration
-
-        -- Calculate desired velocity components with additional smoothing
-        local desired_vel_x = (target.x - start.x) * velocity_eased_t * vel_scale
-        local desired_vel_z = (target.z - start.z) * velocity_eased_t * vel_scale
-
-        -- Calculate vertical velocity with parabolic component
-        local height_factor_derivative = -4 * (2 * ultra_smooth_t - 1) -- Derivative of parabolic height
-        local desired_vel_y = (target.y - start.y) / duration + height_factor_derivative * limited_max_h / duration
-
-        local desired_velocity = {
-            x = desired_vel_x,
-            y = desired_vel_y,
-            z = desired_vel_z,
-        }
-
-        -- Set the calculated velocity
-        player:set_velocity(desired_velocity)
-
-        -- Integrate velocity to calculate new position
-        local current_pos = player:get_pos() or start
-        local new_pos = {
-            x = current_pos.x + desired_vel_x * step_interval,
-            y = current_pos.y + desired_vel_y * step_interval,
-            z = current_pos.z + desired_vel_z * step_interval,
-        }
-
-        -- Set the integrated position
+        local t = smooth_progress(i / steps)
+        local next_t = smooth_progress((i + 1) / steps)
+        local new_pos = path_pos(t)
+        local next_pos = path_pos(next_t)
         player:set_pos(new_pos)
+        player:set_velocity({
+            x = (next_pos.x - new_pos.x) / actual_interval * 0.25,
+            y = (next_pos.y - new_pos.y) / actual_interval * 0.25,
+            z = (next_pos.z - new_pos.z) / actual_interval * 0.25,
+        })
 
-        minetest.after(step_interval, move_step, i + 1)
+        minetest.after(actual_interval, move_step, i + 1)
     end
 
     move_step(0)
