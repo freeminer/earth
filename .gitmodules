@@ -85,3 +85,9 @@
 [submodule "mods/luanti-earth"]
 	path = mods/luanti-earth
 	url = https://github.com/freeminer/luanti-earth.git
+[submodule "mods/streets"]
+	path = mods/streets
+	url = https://github.com/minetest-mods/streets.git
+[submodule "mods/ts_workshop"]
+	path = mods/ts_workshop
+	url = https://github.com/minetest-mods/ts_workshop.git
