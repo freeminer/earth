@@ -91,3 +91,6 @@
 [submodule "mods/ts_workshop"]
 	path = mods/ts_workshop
 	url = https://github.com/minetest-mods/ts_workshop.git
+[submodule "mods/digilines"]
+	path = mods/digilines
+	url = https://github.com/minetest-mods/digilines.git
