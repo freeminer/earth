@@ -1,5 +1,10 @@
 local MAP_BLOCKSIZE = core.MAP_BLOCKSIZE or 16
+local CITY_EMERGE_TIMEOUT = 30
 local city_jobs = {}
+
+local function city_job_active(state)
+    return city_jobs[state.name] == state
+end
 
 local function city_cube_has_nodes(minp, maxp)
     local vm = core.get_voxel_manip(minp, maxp)
@@ -32,20 +37,7 @@ local function city_base_height(min_x, max_x, min_z, max_z)
     local center_x = math.floor((min_x + max_x) / 2)
     local center_z = math.floor((min_z + max_z) / 2)
     local get_height = core.get_ground_level or core.get_spawn_level
-    local height
-
-    -- Use the lowest of a 3x3 sample so a mountain slope does not make us
-    -- start above lower terrain (and any buildings) in the same mapgen chunk.
-    for _, x in ipairs({min_x, center_x, max_x}) do
-        for _, z in ipairs({min_z, center_z, max_z}) do
-            local sample = get_height(x, z)
-            if sample and (not height or sample < height) then
-                height = sample
-            end
-        end
-    end
-
-    return height
+    return get_height(center_x, center_z)
 end
 
 local function city_onion_position(shell, index)
@@ -70,6 +62,9 @@ local function city_onion_position(shell, index)
 end
 
 local function city_finish(state)
+    if not city_job_active(state) then
+        return
+    end
     city_jobs[state.name] = nil
     local dt = math.floor((core.get_us_time() - state.start_time) / 1000)
     local message = "City generation done: " .. state.completed .. " chunks in " .. dt .. "ms"
@@ -82,6 +77,10 @@ end
 local city_emerge_next
 
 local function city_chunk_done(state, failed)
+    if not city_job_active(state) then
+        return
+    end
+
     state.completed = state.completed + 1
     if failed then
         state.failed = state.failed + 1
@@ -114,6 +113,10 @@ local function city_chunk_done(state, failed)
 end
 
 local function city_emerge_cube(state, horizontal_min, min_y, inspect, retry)
+    if not city_job_active(state) then
+        return
+    end
+
     local minp = {
         x = horizontal_min.x,
         y = min_y,
@@ -125,14 +128,33 @@ local function city_emerge_cube(state, horizontal_min, min_y, inspect, retry)
         z = minp.z + state.chunk_nodes.z - 1,
     }
     local failed = false
+    local settled = false
+    state.operation = state.operation + 1
+    local operation = state.operation
 
-    core.emerge_area(minp, maxp, function(blockpos, action, remaining)
+    -- Do not let an emerge request that never completes keep the job locked.
+    core.after(CITY_EMERGE_TIMEOUT, function()
+        if settled or not city_job_active(state) or state.operation ~= operation then
+            return
+        end
+        settled = true
+        state.operation = state.operation + 1
+        core.log("warning", "[earth] City emerge timed out at " .. core.pos_to_string(minp) ..
+            " to " .. core.pos_to_string(maxp))
+        city_chunk_done(state, true)
+    end)
+
+    local function emerge_callback(blockpos, action, remaining)
+        if settled or not city_job_active(state) or state.operation ~= operation then
+            return
+        end
         if action == core.EMERGE_CANCELLED or action == core.EMERGE_ERRORED then
             failed = true
         end
         if remaining > 0 then
             return
         end
+        settled = true
 
         if failed then
             if retry < 2 then
@@ -143,16 +165,35 @@ local function city_emerge_cube(state, horizontal_min, min_y, inspect, retry)
             return
         end
 
-        if inspect and not city_cube_has_nodes(minp, maxp) then
-            city_chunk_done(state, false)
-            return
+        if inspect then
+            local ok, has_nodes = pcall(city_cube_has_nodes, minp, maxp)
+            if not ok then
+                core.log("error", "[earth] Could not inspect city cube: " .. tostring(has_nodes))
+                city_chunk_done(state, true)
+                return
+            end
+            if not has_nodes then
+                city_chunk_done(state, false)
+                return
+            end
         end
 
         core.after(0, city_emerge_cube, state, horizontal_min, min_y + state.chunk_nodes.y, true, 0)
-    end)
+    end
+
+    local queued, error_message = pcall(core.emerge_area, minp, maxp, emerge_callback)
+    if not queued and city_job_active(state) and state.operation == operation then
+        settled = true
+        core.log("error", "[earth] Could not queue city cube: " .. tostring(error_message))
+        city_chunk_done(state, true)
+    end
 end
 
 city_emerge_next = function(state)
+    if not city_job_active(state) then
+        return
+    end
+
     local dx, dz = city_onion_position(state.shell, state.index)
     local horizontal_min = {
         x = state.center_min.x + dx * state.chunk_nodes.x,
@@ -160,9 +201,14 @@ city_emerge_next = function(state)
     }
     local max_x = horizontal_min.x + state.chunk_nodes.x - 1
     local max_z = horizontal_min.z + state.chunk_nodes.z - 1
-    local base_height = city_base_height(horizontal_min.x, max_x, horizontal_min.z, max_z)
+    local ok, base_height = pcall(city_base_height, horizontal_min.x, max_x,
+        horizontal_min.z, max_z)
 
-    if not base_height then
+    if not ok then
+        core.log("error", "[earth] Could not determine city chunk height: " .. tostring(base_height))
+        city_chunk_done(state, true)
+        return
+    elseif not base_height then
         city_chunk_done(state, true)
         return
     end
@@ -188,9 +234,7 @@ core.register_chatcommand("emerge_radius_city", {
             return false, "Player not found."
         end
 
-        if city_jobs[name] then
-            return false, "A city generation job is already running for you."
-        end
+        local replaced = city_jobs[name] ~= nil
 
         local pos = player:get_pos()
         local center_x = math.floor(pos.x)
@@ -229,12 +273,17 @@ core.register_chatcommand("emerge_radius_city", {
             progress_step = progress_step,
             next_progress = progress_step,
             start_time = core.get_us_time(),
+            operation = 0,
         }
 
         city_jobs[name] = state
         city_emerge_next(state)
-        return true,
-            "Started city generation of " .. total .. " mapgen chunks (" .. chunk_nodes.x .. "x" .. chunk_nodes.y .. "x" ..
-                chunk_nodes.z .. " nodes each), center first."
+        local message = "Started city generation of " .. total .. " mapgen chunks (" ..
+            chunk_nodes.x .. "x" .. chunk_nodes.y .. "x" .. chunk_nodes.z ..
+            " nodes each), center first."
+        if replaced then
+            message = "Replaced the previous city generation job. " .. message
+        end
+        return true, message
     end,
 })
