@@ -94,3 +94,6 @@
 [submodule "mods/digilines"]
 	path = mods/digilines
 	url = https://github.com/minetest-mods/digilines.git
+[submodule "mods/basic_trains"]
+	path = mods/basic_trains
+	url = https://git.bananach.space/basic_trains.git
