@@ -53,6 +53,7 @@ PcgRandom = function(seed)
         end,
     }
 end
+local immediate_seconds = 20
 core = {
     get_mod_storage = function()
         return storage
@@ -218,6 +219,8 @@ core = {
     end,
     after = function(delay, f)
         if delay == 0 then
+            -- Model time spent generating each sampled region in this synchronous fixture.
+            clock = clock + immediate_seconds * 1000000
             f()
         else
             jobs[#jobs + 1] = {
@@ -411,7 +414,7 @@ callbacks.place({
 }, {
     name = 'default:obsidian',
 }, player)
-assert(messages[#messages]:find('no safe'), 'missing search failure')
+assert(messages[#messages]:find('timed out'), 'missing search failure')
 assert(core.get_node({
     x = 1,
     y = 1,
@@ -750,6 +753,7 @@ print('PASS: server-step round trip, cooldown, destination load retry and LBM re
 
 -- Region sequences depend only on frame coordinates and the search settings.
 local function regions(origin)
+    immediate_seconds = 11
     nodes, metas = {}, {}
     for u = 0, 3 do
         for v = 0, 4 do
@@ -779,7 +783,8 @@ local function regions(origin)
     callbacks.place(origin, {
         name = 'default:obsidian',
     }, player)
-    assert(#sampled == 3, 'wrong number of deterministic attempts')
+    immediate_seconds = 20
+    assert(#sampled == 3, 'wrong number of deterministic attempts: ' .. #sampled)
     return table.concat(sampled, ';')
 end
 local math_random = math.random
@@ -962,7 +967,7 @@ callbacks.place({
 }, {
     name = 'default:obsidian',
 }, player)
-assert(messages[#messages]:find('no safe'), 'broken old frame did not fall back to search')
+assert(messages[#messages]:find('timed out'), 'broken old frame did not fall back to search')
 assert(core.get_node({
     x = 20,
     y = -30897,
@@ -1037,6 +1042,7 @@ local function relative_range(source_y, extra, source_x, axis)
         if extra and extra[name] then
             return name == 'portals_y_offset' and tostring(tonumber(extra[name]) / 3) or extra[name]
         end
+        if name == 'portals_search_radius' then return '500' end
         if name == 'portals_y_offset' then
             return '10000'
         end
@@ -1883,6 +1889,7 @@ do
             if name == 'portals_search_attempts' then
                 return '1'
             end
+            if name == 'portals_search_radius' then return '500' end
             if name == 'portals_y_offset' then
                 return '10000'
             end
@@ -1890,6 +1897,7 @@ do
         end
         core.settings.get_bool = function(_, name, fallback)
             if name == "portals_spawn_in_liquids" and options.disable_liquids then return false end
+            if name == "portals_safe_destination" then return options.safe or false end
             return fallback
         end
         local a = {
@@ -1993,9 +2001,10 @@ do
     end
     for _, options in ipairs({{liquid = true}, {liquid = true, damage = 4},
         {liquid = true, solid_liquid = true}, {liquid = true, disable_liquids = true},
-        {liquid = true, protected = true}}) do
+        {liquid = true, protected = true}, {liquid = true, safe = true},
+        {liquid = true, safe = true, damage = 4}, {liquid = true, safe = true, solid_liquid = true}}) do
         local a, b, at = flat_pair(4, 5, false, options)
-        local expected = not options.damage and not options.solid_liquid and not options.disable_liquids
+        local expected = (not options.safe or not options.damage and not options.solid_liquid) and not options.disable_liquids
             and not options.protected
         assert((core.get_node(at(a, 1, 1)).name == 'portals:portal') == expected,
             'submerged destination acceptance ignored liquid safety, protection or setting')
